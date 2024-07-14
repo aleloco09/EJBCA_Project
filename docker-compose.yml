@@ -1,0 +1,100 @@
+networks:
+  access-bridge:
+    driver: bridge
+  application-bridge:
+    driver: bridge
+services:
+  ejbca-database-ca:
+    container_name: ejbca-database-ca
+    image: "library/mariadb:latest"
+    networks:
+      - application-bridge
+    environment:
+      - MYSQL_ROOT_PASSWORD=foo123
+      - MYSQL_DATABASE=ejbca
+      - MYSQL_USER=ejbca
+      - MYSQL_PASSWORD=ejbca
+    volumes:
+      - ./datadbdir-ca:/var/lib/mysql:rw
+    ports:
+      - "3306:3306"
+  ejbca-database-va:
+    container_name: ejbca-database-va
+    image: "library/mariadb:latest"
+    networks:
+      - application-bridge
+    environment:
+      - MYSQL_ROOT_PASSWORD=foo123
+      - MYSQL_DATABASE=ejbca
+      - MYSQL_USER=ejbca
+      - MYSQL_PASSWORD=ejbca
+    volumes:
+      - ./datadbdir-va:/var/lib/mysql:rw
+  ejbca-ca-node:
+    hostname: ejbca-ca-node
+    container_name: ejbca-ca
+    build:
+      context: .
+      dockerfile: Dockerfile.ejbca
+    depends_on:
+      - ejbca-database-ca
+      - virtual-hsm-ca
+    networks:
+      - application-bridge
+      - access-bridge
+    environment:
+      - DATABASE_JDBC_URL=jdbc:mariadb://ejbca-database-ca:3306/ejbca?characterEncoding=UTF-8
+      - LOG_LEVEL_APP=INFO
+      - LOG_LEVEL_SERVER=INFO
+      - TLS_SETUP_ENABLED=simple
+      - SOFTHSM2_CONF=/opt/softhsm/config/softhsm2.conf
+    volumes:
+      - ./ca/secrets-ca/truststore:/mnt/external/secrets/tls/ts:rw
+      - ./ca/hsm-conf:/opt/softhsm/config:ro
+      - ./ca/tokens-ca:/opt/softhsm/tokens:rw 
+    ports:
+      - "80:8080"
+      - "443:8443"
+  ejbca-va-node:
+    hostname: ejbca-va-node
+    container_name: ejbca-va
+    build:
+      context: .
+      dockerfile: Dockerfile.ejbca
+    depends_on:
+      - ejbca-database-va
+      - virtual-hsm-va
+    networks:
+      - application-bridge
+      - access-bridge
+    environment:
+      - DATABASE_JDBC_URL=jdbc:mariadb://ejbca-database-va:3306/ejbca?characterEncoding=UTF-8
+      - LOG_LEVEL_APP=INFO
+      - LOG_LEVEL_SERVER=INFO
+      - TLS_SETUP_ENABLED=simple
+      - SOFTHSM2_CONF=/opt/softhsm/config/softhsm2.conf
+    volumes:
+      - ./va/secrets-va/truststore:/mnt/external/secrets/tls/ts:rw
+      - ./va/hsm-conf:/opt/softhsm/config:ro
+      - ./va/tokens-va:/opt/softhsm/tokens:rw
+    ports:
+      - "81:8080"
+      - "444:8443"
+  virtual-hsm-ca:
+    container_name: virtual-hsm-ca
+    build:
+      context: .
+      dockerfile: Dockerfile.softhsm
+    volumes:
+      - ./ca/tokens-ca:/var/lib/softhsm/tokens/:rw
+  virtual-hsm-va:
+    container_name: virtual-hsm-va
+    build:
+      context: .
+      dockerfile: Dockerfile.softhsm
+    volumes:
+      - ./va/tokens-va:/var/lib/softhsm/tokens/:rw
+
+
+
+

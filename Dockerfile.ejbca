@@ -1,0 +1,55 @@
+FROM centos:7 AS builder
+
+# Install dependencies required to build OpenSSL
+RUN yum -y update && \
+    yum -y groupinstall "Development Tools" && \
+    yum -y install perl-IPC-Cmd wget
+
+# Download and extract OpenSSL
+WORKDIR /tmp
+RUN wget https://www.openssl.org/source/openssl-3.2.1.tar.gz && \
+    tar xvf openssl-3.2.1.tar.gz
+
+# Build and install OpenSSL
+WORKDIR /tmp/openssl-3.2.1
+RUN ./config --prefix=/usr/local/openssl --openssldir=/usr/local/openssl && \
+    make -j $(nproc) && \
+    make install
+
+# Update the shared libraries cache and system-wide OpenSSL configurations
+RUN ldconfig && \
+    echo 'export PATH=/usr/local/openssl/bin:$PATH' >> /etc/profile.d/openssl.sh && \
+    echo 'export LD_LIBRARY_PATH=/usr/local/openssl/lib:/usr/local/openssl/lib64:$LD_LIBRARY_PATH' >> /etc/profile.d/openssl.sh
+
+# Set environment variables to use the new OpenSSL version
+ENV LD_LIBRARY_PATH="/usr/local/openssl/lib64:${LD_LIBRARY_PATH}" \
+    LDFLAGS="-L/usr/local/openssl/lib64 $LDFLAGS"
+
+# Continue with your previous steps
+WORKDIR /build
+COPY ./hsm-conf/softhsm2.conf /etc/softhsm2.conf
+
+# Install additional dependencies required for your application
+RUN yum -y install automake autoconf libtool pkgconfig && \
+    curl --silent -D - -L "https://github.com/opendnssec/SoftHSMv2/archive/refs/tags/2.6.1.tar.gz" -o SoftHSMv2-current.tar.gz && \
+    mkdir -p /build/softhsmv2 && \
+    tar -xf SoftHSMv2-current.tar.gz -C "/build/softhsmv2" --strip-components=1 && \
+    cd softhsmv2/ && \
+    ./autogen.sh && \
+    ./configure --disable-non-paged-memory --prefix=/usr --with-openssl=/usr/local/openssl && \
+    make -s && \
+    make -s install && \
+    # Create the directory for the tokens
+    mkdir -p /var/lib/softhsm/tokens && \
+    chgrp -R 0   /var/lib/softhsm/ /etc/softhsm2.conf && \
+    chmod -R g=u /var/lib/softhsm/ /etc/softhsm2.conf && \
+    chown -R 10001:0 /var/lib/softhsm/tokens
+
+FROM keyfactor/ejbca-ce:latest
+
+USER 0:0
+
+COPY --from=builder --chown=10001:0  /usr/local/openssl/lib64/libcrypto.so.3	/usr/lib64/libcrypto.so.3
+COPY --from=builder --chown=10001:0  /usr/lib/softhsm/libsofthsm2.so    /usr/lib/softhsm/libsofthsm2.so
+
+USER 10001:0
